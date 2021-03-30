@@ -46,8 +46,15 @@ namespace Xamarin.Android.Build.Tests
 				WebContent = "https://storage.googleapis.com/google-code-archive-downloads/v2/code.google.com/svg-android/svg-android.jar"
 			});
 			proj.AndroidClassParser = classParser;
-			using (var b = CreateDllBuilder (Path.Combine ("temp", TestName))) {
+			using (var b = CreateDllBuilder ()) {
 				Assert.IsTrue (b.Build (proj), "Build should have succeeded.");
+
+				var assemblyPath = Path.Combine (Root, b.ProjectDirectory, proj.OutputPath, $"{proj.ProjectName}.dll");
+				using (var assembly = AssemblyDefinition.ReadAssembly (assemblyPath)) {
+					var typeName = "Com.Larvalabs.Svgandroid.SVG";
+					var type = assembly.MainModule.GetType (typeName);
+					Assert.IsNotNull (type, $"{assemblyPath} should contain {typeName}");
+				}
 
 				//A list of properties we check exist in binding projects
 				var properties = new [] {
@@ -438,6 +445,30 @@ namespace Foo {
 		}
 
 		[Test]
+		[Category ("DotNetIgnore")]
+		public void JavaDocJar ()
+		{
+			var binding = new XamarinAndroidBindingProject () {
+				AndroidClassParser = "class-parse",
+			};
+			binding.SetProperty ("DocumentationFile", "UnnamedProject.xml");
+			using (var bindingBuilder = CreateDllBuilder ()) {
+				binding.Jars.Add (new AndroidItem.EmbeddedJar ("javasourcejartest.jar") {
+					BinaryContent = () => ResourceData.JavaSourceJarTestJar,
+				});
+				binding.OtherBuildItems.Add (new BuildItem ("JavaDocJar", "javasourcejartest-javadoc.jar") {
+					BinaryContent = () => ResourceData.JavaSourceJarTestJavadocJar,
+				});
+				Assert.IsTrue (bindingBuilder.Build (binding), "binding build should have succeeded");
+
+				var cs_file = bindingBuilder.Output.GetIntermediaryPath (
+					Path.Combine ("generated", "src", "Com.Xamarin.Android.Test.Msbuildtest.JavaSourceJarTest.cs"));
+				FileAssert.Exists (cs_file);
+				StringAssert.Contains ("Greet (string name, global::Java.Util.Date date)", File.ReadAllText (cs_file));
+			}
+		}
+
+		[Test]
 		public void JavaSourceJar ()
 		{
 			var binding = new XamarinAndroidBindingProject () {
@@ -446,42 +477,17 @@ namespace Foo {
 			binding.SetProperty ("DocumentationFile", "UnnamedProject.xml");
 			using (var bindingBuilder = CreateDllBuilder ()) {
 				binding.Jars.Add (new AndroidItem.EmbeddedJar ("javasourcejartest.jar") {
-					BinaryContent = () => Convert.FromBase64String (InlineData.JavaClassesJarBase64)
+					BinaryContent = () => ResourceData.JavaSourceJarTestJar,
 				});
 				binding.OtherBuildItems.Add (new BuildItem ("JavaSourceJar", "javasourcejartest-sources.jar") {
-					BinaryContent = () => Convert.FromBase64String (InlineData.JavaSourcesJarBase64)
+					BinaryContent = () => ResourceData.JavaSourceJarTestSourcesJar,
 				});
 				Assert.IsTrue (bindingBuilder.Build (binding), "binding build should have succeeded");
-				var jdkVersion = GetJdkVersion ();
-				if (jdkVersion > new Version (9, 0)) {
-					Assert.Ignore ("JDK 11 and @(JavaSourceJar) don't currently mix.");
-					return;
-				}
-				string xml = bindingBuilder.Output.GetIntermediaryAsText ("docs/Com.Xamarin.Android.Test.Msbuildtest/JavaSourceJarTest.xml");
-				Assert.IsTrue (xml.Contains ("<param name=\"name\"> - name to display.</param>"), "missing doc");
-			}
-		}
 
-		static Version GetJdkVersion ()
-		{
-			var jdkPath     = AndroidSdkResolver.GetJavaSdkPath ();
-			var releasePath = Path.Combine (jdkPath, "release");
-			if (!File.Exists (releasePath))
-				return null;
-			foreach (var line in File.ReadLines (releasePath)) {
-				const string JavaVersionStart = "JAVA_VERSION=\"";
-				if (!line.StartsWith (JavaVersionStart, StringComparison.OrdinalIgnoreCase))
-					continue;
-				var value   = line.Substring (JavaVersionStart.Length, line.Length - JavaVersionStart.Length - 1);
-				int last    = 0;
-				for (last = 0; last < value.Length; ++last) {
-					if (char.IsDigit (value, last) || value [last] == '.')
-						continue;
-					break;
-				}
-				return Version.Parse (last == value.Length ? value : value.Substring (0, last));
+				var path    = Path.Combine (Root, bindingBuilder.ProjectDirectory, binding.OutputPath, "UnnamedProject.xml");
+				var xml     = File.ReadAllText (path);
+				Assert.IsTrue (xml.Contains ("<param name=\"name\">name to display.</param>"), "param `name` documentation not imported!");
 			}
-			return null;
 		}
 
 		[Test]
@@ -521,7 +527,7 @@ namespace Foo {
 				AndroidClassParser = classParser,
 				Jars = {
 					new AndroidItem.EmbeddedJar ("foo.jar") {
-						BinaryContent = () => Convert.FromBase64String (InlineData.JavaClassesJarBase64),
+						BinaryContent = () => ResourceData.JavaSourceJarTestJar,
 					}
 				}
 			};
@@ -642,6 +648,43 @@ VNZXRob2RzLmphdmFQSwUGAAAAAAcABwDOAQAAVgMAAAAA
 				var libraryProjects = Path.Combine (Root, appBuilder.ProjectDirectory, app.IntermediateOutputPath, "lp");
 				Assert.IsFalse (Directory.EnumerateFiles (libraryProjects, "lint.jar", SearchOption.AllDirectories).Any (),
 					"`lint.jar` should not be extracted!");
+			}
+		}
+
+		/// <summary>
+		/// Tests two .aar files with r-classes.jar
+		/// </summary>
+		[Test]
+		public void AarWithRClassesJar ()
+		{
+			var path = Path.Combine ("temp", TestName);
+			var lib1 = new XamarinAndroidBindingProject {
+				ProjectName = "Library1",
+				AndroidClassParser = "class-parse",
+				Jars = {
+					new AndroidItem.LibraryProjectZip ("Library1.aar") {
+						BinaryContent = () => ResourceData.Library1Aar
+					}
+				},
+			};
+			var lib2 = new XamarinAndroidBindingProject {
+				ProjectName = "Library2",
+				AndroidClassParser = "class-parse",
+				Jars = {
+					new AndroidItem.LibraryProjectZip ("Library2.aar") {
+						BinaryContent = () => ResourceData.Library2Aar
+					}
+				},
+			};
+			var app = new XamarinAndroidApplicationProject ();
+			app.AddReference (lib1);
+			app.AddReference (lib2);
+			using (var lib1Builder = CreateDllBuilder (Path.Combine (path, lib1.ProjectName)))
+			using (var lib2Builder = CreateDllBuilder (Path.Combine (path, lib2.ProjectName)))
+			using (var appBuilder = CreateApkBuilder (Path.Combine (path, app.ProjectName))) {
+				Assert.IsTrue (lib1Builder.Build (lib1), "Library1 build should have succeeded.");
+				Assert.IsTrue (lib2Builder.Build (lib2), "Library2 build should have succeeded.");
+				Assert.IsTrue (appBuilder.Build (app), "App build should have succeeded.");
 			}
 		}
 	}

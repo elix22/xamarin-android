@@ -1,9 +1,10 @@
-﻿using Microsoft.Build.Framework;
+using Microsoft.Build.Framework;
 using Microsoft.Build.Utilities;
 using System;
 using System.IO;
 using System.Linq;
 using Xamarin.Android.Tools;
+using Microsoft.Android.Build.Tasks;
 
 namespace Xamarin.Android.Tasks
 {
@@ -43,6 +44,8 @@ namespace Xamarin.Android.Tasks
 
 		string GetJvmPath ()
 		{
+			// NOTE: this doesn't need to use GetRegisteredTaskObjectAssemblyLocal()
+			// because JavaSdkPath is the key and the value is a string.
 			var key = new Tuple<string, string> (nameof (ResolveJdkJvmPath), JavaSdkPath);
 			var cached = BuildEngine4.GetRegisteredTaskObject (key, RegisteredTaskObjectLifetime.AppDomain) as string;
 			if (cached != null) {

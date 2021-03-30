@@ -6,6 +6,7 @@ using System.Text;
 
 using Java.Interop.Tools.Cecil;
 using Mono.Cecil;
+using Microsoft.Android.Build.Tasks;
 
 namespace Xamarin.Android.Tasks
 {
@@ -81,6 +82,7 @@ namespace Xamarin.Android.Tasks
 			public int ManagedIndex;
 			public TypeDefinition TypeDefinition;
 			public bool SkipInJavaToManaged;
+			public TypeMapDebugEntry DuplicateForJavaToManaged;
 		}
 
 		// Widths include the terminating nul character but not the padding!
@@ -111,7 +113,7 @@ namespace Xamarin.Android.Tasks
 				throw new ArgumentNullException (nameof (supportedAbis));
 			this.supportedAbis = supportedAbis;
 
-			outputEncoding = MonoAndroidHelper.UTF8withoutBOM;
+			outputEncoding = Files.UTF8withoutBOM;
 			moduleMagicString = outputEncoding.GetBytes (TypeMapMagicString);
 			typemapIndexMagicString = outputEncoding.GetBytes (TypeMapIndexMagicString);
 		}
@@ -214,7 +216,7 @@ namespace Xamarin.Android.Tasks
 			using (var indexWriter = MemoryStreamPool.Shared.CreateBinaryWriter ()) {
 				OutputModules (modules, indexWriter, maxModuleFileNameWidth + 1);
 				indexWriter.Flush ();
-				MonoAndroidHelper.CopyIfStreamChanged (indexWriter.BaseStream, typeMapIndexPath);
+				Files.CopyIfStreamChanged (indexWriter.BaseStream, typeMapIndexPath);
 			}
 			GeneratedBinaryTypeMaps.Add (typeMapIndexPath);
 
@@ -267,11 +269,13 @@ namespace Xamarin.Android.Tasks
 					continue;
 				}
 
+				// Java duplicates must all point to the same managed type
+				// Managed types, however, must point back to the original Java type instead
+				// File/assembly generator use the `DuplicateForJavaToManaged` field to know to which managed type the
+				// duplicate Java type must be mapped.
 				TypeMapDebugEntry template = duplicates [0];
 				for (int i = 1; i < duplicates.Count; i++) {
-					duplicates[i].TypeDefinition = template.TypeDefinition;
-					duplicates[i].ManagedName = template.ManagedName;
-					duplicates[i].SkipInJavaToManaged = template.SkipInJavaToManaged;
+					duplicates[i].DuplicateForJavaToManaged = template;
 				}
 			}
 		}
@@ -476,7 +480,7 @@ namespace Xamarin.Android.Tasks
 				using (var sw = MemoryStreamPool.Shared.CreateStreamWriter (outputEncoding)) {
 					generator.Write (sw);
 					sw.Flush ();
-					MonoAndroidHelper.CopyIfStreamChanged (sw.BaseStream, generator.MainSourceFile);
+					Files.CopyIfStreamChanged (sw.BaseStream, generator.MainSourceFile);
 					if (!sharedIncludeUsesAbiPrefix)
 						sharedBitsWritten = true;
 				}
@@ -523,7 +527,7 @@ namespace Xamarin.Android.Tasks
 			using (var bw = MemoryStreamPool.Shared.CreateBinaryWriter ()) {
 				OutputModule (bw, moduleData);
 				bw.Flush ();
-				MonoAndroidHelper.CopyIfStreamChanged (bw.BaseStream, moduleData.OutputFilePath);
+				Files.CopyIfStreamChanged (bw.BaseStream, moduleData.OutputFilePath);
 			}
 			GeneratedBinaryTypeMaps.Add (moduleData.OutputFilePath);
 		}
@@ -571,7 +575,9 @@ namespace Xamarin.Android.Tasks
 			foreach (TypeMapDebugEntry entry in moduleData.JavaToManagedMap) {
 				bw.Write (outputEncoding.GetBytes (entry.JavaName));
 				PadField (bw, entry.JavaName.Length, (int)moduleData.JavaNameWidth);
-				bw.Write (entry.SkipInJavaToManaged ? InvalidJavaToManagedMappingIndex : (uint)entry.ManagedIndex);
+
+				TypeMapGenerator.TypeMapDebugEntry managedEntry = entry.DuplicateForJavaToManaged != null ? entry.DuplicateForJavaToManaged : entry;
+				bw.Write (managedEntry.SkipInJavaToManaged ? InvalidJavaToManagedMappingIndex : (uint)managedEntry.ManagedIndex);
 			}
 
 			foreach (TypeMapDebugEntry entry in moduleData.ManagedToJavaMap) {

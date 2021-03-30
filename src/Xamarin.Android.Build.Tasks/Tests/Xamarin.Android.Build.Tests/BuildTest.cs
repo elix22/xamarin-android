@@ -15,6 +15,7 @@ using NUnit.Framework;
 using Xamarin.Android.Tasks;
 using Xamarin.Android.Tools;
 using Xamarin.ProjectTools;
+using Microsoft.Android.Build.Tasks;
 
 namespace Xamarin.Android.Build.Tests
 {
@@ -56,14 +57,15 @@ namespace Xamarin.Android.Build.Tests
 			}
 		}
 
-		string GetLinkedPath (ProjectBuilder builder, bool isRelease, string filename)
+		public static string GetLinkedPath (ProjectBuilder builder, bool isRelease, string filename)
 		{
 			return Builder.UseDotNet && isRelease ?
-				builder.Output.GetIntermediaryPath (Path.Combine ("android.21-arm64", "linked", filename)) :
+				builder.Output.GetIntermediaryPath (Path.Combine ("android-arm64", "linked", filename)) :
 				builder.Output.GetIntermediaryPath (Path.Combine ("android", "assets", filename));
 		}
 
 		[Test]
+		[Category ("SmokeTests")]
 		public void BuildReleaseArm64 ([Values (false, true)] bool forms)
 		{
 			var proj = forms ?
@@ -76,10 +78,17 @@ namespace Xamarin.Android.Build.Tests
 			if (forms) {
 				proj.PackageReferences.Clear ();
 				proj.PackageReferences.Add (KnownPackages.XamarinForms_4_7_0_1142);
-
-				if (Builder.UseDotNet)
-					proj.AddDotNetCompatPackages ();
 			}
+
+			byte [] apkDescData;
+			var flavor = (forms ? "XForms" : "Simple") + (Builder.UseDotNet ? "DotNet" : "Legacy");
+			var apkDescFilename = $"BuildReleaseArm64{flavor}.apkdesc";
+			var apkDescReference = "reference.apkdesc";
+			using (var stream = typeof (XamarinAndroidApplicationProject).Assembly.GetManifestResourceStream ($"Xamarin.ProjectTools.Resources.Base.{apkDescFilename}")) {
+				apkDescData = new byte [stream.Length];
+				stream.Read (apkDescData, 0, (int) stream.Length);
+			}
+			proj.OtherBuildItems.Add (new BuildItem ("ApkDescFile", apkDescReference) { BinaryContent = () => apkDescData });
 
 			// use BuildHelper.CreateApkBuilder so that the test directory is not removed in tearup
 			using (var b = BuildHelper.CreateApkBuilder (Path.Combine ("temp", TestName))) {
@@ -90,6 +99,14 @@ namespace Xamarin.Android.Build.Tests
 					? GetLinkedPath (b, true, depsFilename)
 					: Path.Combine (proj.Root, b.ProjectDirectory, depsFilename);
 				FileAssert.Exists (depsFile);
+
+				const int ApkSizeThreshold = 5 * 1024;
+				const int AssemblySizeThreshold = 5 * 1024;
+				var apkFile = Path.Combine (Root, b.ProjectDirectory, proj.OutputPath, proj.PackageName + "-Signed.apk");
+				var apkDescPath = Path.Combine (Root, apkDescFilename);
+				var apkDescReferencePath = Path.Combine (Root, b.ProjectDirectory, apkDescReference);
+				var (code, stdOut, stdErr) = RunApkDiffCommand ($"-s --save-description-2={apkDescPath} --descrease-is-regression --test-apk-size-regression={ApkSizeThreshold} --test-assembly-size-regression={AssemblySizeThreshold} {apkDescReferencePath} {apkFile}");
+				Assert.IsTrue (code == 0, $"apkdiff regression test failed with exit code: {code}\ncontext: https://github.com/xamarin/xamarin-android/blob/main/Documentation/project-docs/ApkSizeRegressionChecks.md\nstdOut: {stdOut}\nstdErr: {stdErr}");
 			}
 		}
 
@@ -175,9 +192,30 @@ namespace Xamarin.Android.Build.Tests
 			//NOTE: these properties should not affect class libraries at all
 			proj.SetProperty ("AndroidPackageFormat", "aab");
 			proj.SetProperty ("AotAssemblies", "true");
+			proj.SetProperty ("AndroidEnableMultiDex", "true");
 			using (var b = CreateDllBuilder ()) {
 				Assert.IsTrue (b.Build (proj), "Build should have succeeded.");
 				Assert.IsTrue (StringAssertEx.ContainsText (b.LastBuildOutput, " 0 Warning(s)"), "Should have no MSBuild warnings.");
+
+				// $(AndroidEnableMultiDex) should not add android-support-multidex.jar!
+				if (Builder.UseDotNet) {
+					var aarPath = Path.Combine (Root, b.ProjectDirectory, proj.OutputPath, $"{proj.ProjectName}.aar");
+					using var zip = Xamarin.Tools.Zip.ZipArchive.Open (aarPath, FileMode.Open);
+					Assert.IsFalse (zip.Any (e => e.FullName.EndsWith (".jar", StringComparison.OrdinalIgnoreCase)),
+						$"{aarPath} should not contain a .jar file!");
+				} else {
+					var assemblyPath = Path.Combine (Root, b.ProjectDirectory, proj.OutputPath, $"{proj.ProjectName}.dll");
+					using var assembly = AssemblyDefinition.ReadAssembly (assemblyPath);
+					const string libraryProjects = "__AndroidLibraryProjects__.zip";
+					var resource = assembly.MainModule.Resources.OfType<EmbeddedResource> ()
+						.FirstOrDefault (e => e.Name == libraryProjects);
+					Assert.IsNotNull (resource, $"{assemblyPath} should contain {libraryProjects}");
+
+					using var stream = resource.GetResourceStream ();
+					using var zip = Xamarin.Tools.Zip.ZipArchive.Open (stream);
+					Assert.IsFalse (zip.Any (e => e.FullName.EndsWith (".jar", StringComparison.OrdinalIgnoreCase)),
+						$"{resource.Name} should not contain a .jar file!");
+				}
 			}
 		}
 
@@ -953,14 +991,14 @@ namespace UnamedProject
 					"bundles", "armeabi-v7a", "libmonodroid_bundle_app.so");
 				Assert.IsTrue (File.Exists (libapp), "libmonodroid_bundle_app.so does not exist");
 				var apk = Path.Combine (Root, b.ProjectDirectory,
-					proj.IntermediateOutputPath, "android", "bin", "UnnamedProject.UnnamedProject.apk");
+					proj.IntermediateOutputPath, "android", "bin", $"{proj.PackageName}.apk");
 				using (var zipFile = ZipHelper.OpenZip (apk)) {
 					Assert.IsNotNull (ZipHelper.ReadFileFromZip (zipFile,
 						"lib/armeabi-v7a/libmonodroid_bundle_app.so"),
-						"lib/armeabi-v7a/libmonodroid_bundle_app.so should be in the UnnamedProject.UnnamedProject.apk");
+						$"lib/armeabi-v7a/libmonodroid_bundle_app.so should be in the {proj.PackageName}.apk");
 					Assert.IsNull (ZipHelper.ReadFileFromZip (zipFile,
 						Path.Combine ("assemblies", "UnnamedProject.dll")),
-						"UnnamedProject.dll should not be in the UnnamedProject.UnnamedProject.apk");
+						$"UnnamedProject.dll should not be in the {proj.PackageName}.apk");
 				}
 			}
 		}
@@ -981,14 +1019,14 @@ namespace UnamedProject
 						"bundles", abi, "libmonodroid_bundle_app.so");
 					Assert.IsTrue (File.Exists (libapp), abi + " libmonodroid_bundle_app.so does not exist");
 					var apk = Path.Combine (Root, b.ProjectDirectory,
-						proj.IntermediateOutputPath, "android", "bin", "UnnamedProject.UnnamedProject.apk");
+						proj.IntermediateOutputPath, "android", "bin", $"{proj.PackageName}.apk");
 					using (var zipFile = ZipHelper.OpenZip (apk)) {
 						Assert.IsNotNull (ZipHelper.ReadFileFromZip (zipFile,
 							"lib/" + abi + "/libmonodroid_bundle_app.so"),
-							"lib/{0}/libmonodroid_bundle_app.so should be in the UnnamedProject.UnnamedProject.apk", abi);
+							$"lib/{0}/libmonodroid_bundle_app.so should be in the {proj.PackageName}.apk", abi);
 						Assert.IsNull (ZipHelper.ReadFileFromZip (zipFile,
 							Path.Combine ("assemblies", "UnnamedProject.dll")),
-							"UnnamedProject.dll should not be in the UnnamedProject.UnnamedProject.apk");
+							$"UnnamedProject.dll should not be in the {proj.PackageName}.apk");
 					}
 				}
 			}
@@ -1129,7 +1167,7 @@ namespace UnamedProject
 			using (var b = CreateApkBuilder ()) {
 				string intermediateDir = Path.Combine (Root, b.ProjectDirectory, proj.IntermediateOutputPath);
 				string androidBinDir = Path.Combine (intermediateDir, "android", "bin");
-				string apkPath = Path.Combine (androidBinDir, "UnnamedProject.UnnamedProject.apk");
+				string apkPath = Path.Combine (androidBinDir, $"{proj.PackageName}.apk");
 
 				Assert.IsTrue (b.Build (proj), "Build should have succeeded.");
 				FileAssert.Exists (Path.Combine (androidBinDir, "classes.dex"));
@@ -1618,25 +1656,11 @@ namespace App1
 			}
 		}
 
-		/// <summary>
-		/// Works around a bug in lint.bat on Windows: https://issuetracker.google.com/issues/68753324
-		/// - We may want to remove this if a future Android SDK tools, no longer has this issue
-		/// </summary>
-		void FixLintOnWindows ()
-		{
-			if (Environment.OSVersion.Platform == PlatformID.Win32NT) {
-				var androidSdk = AndroidSdkResolver.GetAndroidSdkPath ();
-				var androidSdkTools = Path.Combine (androidSdk, "tools");
-				if (Directory.Exists (androidSdkTools)) {
-					Environment.SetEnvironmentVariable ("JAVA_OPTS", $"\"-Dcom.android.tools.lint.bindir={androidSdkTools}\"", EnvironmentVariableTarget.Process);
-				}
-			}
-		}
-
 		[Test]
 		public void CheckLintResourceFileReferencesAreFixed ()
 		{
-			FixLintOnWindows ();
+			if (TestEnvironment.IsUsingJdk8)
+				Assert.Ignore ("https://github.com/xamarin/xamarin-android/issues/5698");
 
 			var proj = new XamarinAndroidApplicationProject () {
 				PackageReferences = {
@@ -1679,7 +1703,8 @@ namespace App1
 		[NonParallelizable]
 		public void CheckLintErrorsAndWarnings ()
 		{
-			FixLintOnWindows ();
+			if (TestEnvironment.IsUsingJdk8)
+				Assert.Ignore ("https://github.com/xamarin/xamarin-android/issues/5698");
 
 			string disabledIssues = "StaticFieldLeak,ObsoleteSdkInt,AllowBackup,ExportedReceiver";
 
@@ -1722,6 +1747,13 @@ namespace App1
 				int maxApiLevel = AndroidSdkResolver.GetMaxInstalledPlatform ();
 				string apiLevel;
 				proj.TargetFrameworkVersion = b.LatestTargetFrameworkVersion (out apiLevel);
+
+				// TODO: We aren't sure how to support preview bindings in .NET6 yet.
+				if (Builder.UseDotNet && apiLevel == "31") {
+					apiLevel = "30";
+					proj.TargetFrameworkVersion = "v11.0";
+				}
+
 				if (int.TryParse (apiLevel, out int a) && a < maxApiLevel)
 					disabledIssues += ",OldTargetApi";
 				proj.SetProperty ("AndroidLintDisabledIssues", disabledIssues);
@@ -1737,7 +1769,8 @@ namespace App1
 		[Test]
 		public void CheckLintConfigMerging ()
 		{
-			FixLintOnWindows ();
+			if (TestEnvironment.IsUsingJdk8)
+				Assert.Ignore ("https://github.com/xamarin/xamarin-android/issues/5698");
 
 			var proj = new XamarinAndroidApplicationProject ();
 			proj.SetProperty ("AndroidLintEnabled", true.ToString ());
@@ -1788,6 +1821,17 @@ namespace App1
 			});
 			proj.SetProperty ("AndroidResgenClass", "Resource");
 			proj.SetProperty ("AndroidResgenFile", () => "Resources\\Resource.designer" + proj.Language.DefaultExtension);
+			using (var b = CreateDllBuilder ()) {
+				Assert.IsTrue (b.Build (proj), "Build should have succeeded.");
+			}
+		}
+
+		[Test]
+		public void AndroidXClassLibraryNoResources ()
+		{
+			var proj = new XamarinAndroidLibraryProject ();
+			proj.AndroidResources.Clear ();
+			proj.PackageReferences.Add (KnownPackages.AndroidXLegacySupportV4);
 			using (var b = CreateDllBuilder ()) {
 				Assert.IsTrue (b.Build (proj), "Build should have succeeded.");
 			}
@@ -1850,7 +1894,7 @@ namespace App1
 				var runtimeInfo = b.GetSupportedRuntimes ();
 				Assert.IsTrue (b.Build (proj), "Build should have succeeded.");
 				var apkPath = Path.Combine (Root, b.ProjectDirectory,
-					proj.IntermediateOutputPath,"android", "bin", "UnnamedProject.UnnamedProject.apk");
+					proj.IntermediateOutputPath,"android", "bin", $"{proj.PackageName}.apk");
 				using (var apk = ZipHelper.OpenZip (apkPath)) {
 					var runtime = runtimeInfo.FirstOrDefault (x => x.Abi == supportedAbi && x.Runtime == expectedRuntime);
 					Assert.IsNotNull (runtime, "Could not find the expected runtime.");
@@ -1894,18 +1938,18 @@ namespace App1
 					Assert.Ignore ("Cross compiler was not available");
 				Assert.IsTrue (b.Build (proj), "Build should have succeeded.");
 				var apk = Path.Combine (Root, b.ProjectDirectory,
-					proj.IntermediateOutputPath, "android", "bin", "UnnamedProject.UnnamedProject.apk");
+					proj.IntermediateOutputPath, "android", "bin", $"{proj.PackageName}.apk");
 				var msymarchive = Path.Combine (Root, b.ProjectDirectory, proj.OutputPath, proj.PackageName + ".apk.mSYM");
 				using (var zipFile = ZipHelper.OpenZip (apk)) {
 					var mdbExits = ZipHelper.ReadFileFromZip (zipFile, "assemblies/UnnamedProject.dll.mdb") != null ||
 						ZipHelper.ReadFileFromZip (zipFile, "assemblies/UnnamedProject.pdb") != null;
 					Assert.AreEqual (embedMdb, mdbExits,
-						"assemblies/UnnamedProject.dll.mdb or assemblies/UnnamedProject.pdb should{0}be in the UnnamedProject.UnnamedProject.apk", embedMdb ? " " : " not ");
+						$"assemblies/UnnamedProject.dll.mdb or assemblies/UnnamedProject.pdb should{0}be in the {proj.PackageName}.apk", embedMdb ? " " : " not ");
 					if (aotAssemblies) {
 						foreach (var abi in abis) {
 							var assemblies = Path.Combine (Root, b.ProjectDirectory, proj.IntermediateOutputPath,
 								"aot", abi, "libaot-UnnamedProject.dll.so");
-							var shouldExist = monoSymbolArchive && debugSymbols && debugType == "PdbOnly";
+							var shouldExist = monoSymbolArchive && debugSymbols && (debugType == "PdbOnly" || debugType == "Portable");
 							var symbolicateFile = Directory.GetFiles (Path.Combine (Root, b.ProjectDirectory, proj.IntermediateOutputPath,
 								"aot", abi), "UnnamedProject.dll.msym", SearchOption.AllDirectories).FirstOrDefault ();
 							if (shouldExist)
@@ -1919,10 +1963,10 @@ namespace App1
 							Assert.IsTrue (File.Exists (assemblies), "{0} libaot-UnnamedProject.dll.so does not exist", abi);
 							Assert.IsNotNull (ZipHelper.ReadFileFromZip (zipFile,
 								string.Format ("lib/{0}/libaot-UnnamedProject.dll.so", abi)),
-								"lib/{0}/libaot-UnnamedProject.dll.so should be in the UnnamedProject.UnnamedProject.apk", abi);
+								$"lib/{0}/libaot-UnnamedProject.dll.so should be in the {proj.PackageName}.apk", abi);
 							Assert.IsNotNull (ZipHelper.ReadFileFromZip (zipFile,
 								"assemblies/UnnamedProject.dll"),
-								"UnnamedProject.dll should be in the UnnamedProject.UnnamedProject.apk");
+								$"UnnamedProject.dll should be in the {proj.PackageName}.apk");
 						}
 					}
 					var runtimeInfo = b.GetSupportedRuntimes ();
@@ -1992,9 +2036,7 @@ namespace App1
 				}
 			};
 			proj.SetAndroidSupportedAbis ("armeabi-v7a", "x86");
-			if (Builder.UseDotNet) {
-				proj.AddDotNetCompatPackages ();
-			} else {
+			if (!Builder.UseDotNet) {
 				//NOTE: Mono.Data.Sqlite and Mono.Posix do not exist in .NET 5+
 				proj.References.Add (new BuildItem.Reference ("Mono.Data.Sqlite"));
 				proj.References.Add (new BuildItem.Reference ("Mono.Posix"));
@@ -2010,7 +2052,7 @@ Mono.Unix.UnixFileInfo fileInfo = null;");
 					using (var builder = CreateApkBuilder (Path.Combine (path, proj.ProjectName))) {
 						Assert.IsTrue (builder.Build (proj), "Build should have succeeded.");
 						var apk = Path.Combine (Root, builder.ProjectDirectory,
-							proj.IntermediateOutputPath, "android", "bin", "UnnamedProject.UnnamedProject.apk");
+							proj.IntermediateOutputPath, "android", "bin", $"{proj.PackageName}.apk");
 						Assert.IsTrue (StringAssertEx.ContainsText (builder.LastBuildOutput, "warning XA4301: APK already contains the item lib/armeabi-v7a/libRSSupport.so; ignoring."),
 							"warning about skipping libRSSupport.so should have been raised");
 						using (var zipFile = ZipHelper.OpenZip (apk)) {
@@ -2207,7 +2249,7 @@ Mono.Unix.UnixFileInfo fileInfo = null;");
 				var manifest = XDocument.Load (Path.Combine (Root, builder.ProjectDirectory, "obj", "Debug", "android", "AndroidManifest.xml"));
 				var namespaceResolver = new XmlNamespaceManager (new NameTable ());
 				namespaceResolver.AddNamespace ("android", "http://schemas.android.com/apk/res/android");
-				var element = manifest.XPathSelectElement ("/manifest/application/provider[@android:name='UnnamedProject.UnnamedProject']", namespaceResolver);
+				var element = manifest.XPathSelectElement ($"/manifest/application/provider[@android:name='{proj.PackageName}']", namespaceResolver);
 				Assert.IsNotNull (element, "placeholder not replaced");
 			}
 		}
@@ -2227,7 +2269,7 @@ Mono.Unix.UnixFileInfo fileInfo = null;");
 				builder.Target = "Build";
 				Assert.IsTrue (builder.Build (proj), "Build should have succeeded.");
 				var manifest = File.ReadAllText (Path.Combine (Root, builder.ProjectDirectory, "obj", "Debug", "android", "AndroidManifest.xml"));
-				Assert.IsTrue (manifest.Contains ("android:authorities=\"UnnamedProject.UnnamedProject.crashlyticsinitprovider\""), "placeholder not replaced");
+				Assert.IsTrue (manifest.Contains ($"android:authorities=\"{proj.PackageName}.crashlyticsinitprovider\""), "placeholder not replaced");
 				Assert.IsFalse (manifest.Contains ("dollar_openBracket_applicationId_closeBracket"), "`aapt/AndroidManifest.xml` not ignored");
 			}
 		}
@@ -2517,15 +2559,13 @@ AAMMAAABzYW1wbGUvSGVsbG8uY2xhc3NQSwUGAAAAAAMAAwC9AAAA1gEAAAAA") });
 					KnownPackages.AndroidSupportV4_27_0_2_1,
 				},
 			};
-			if (Builder.UseDotNet)
-				proj.AddDotNetCompatPackages ();
 			using (var b = CreateApkBuilder ()) {
 				Assert.IsTrue (b.Build (proj), "Build should have succeeded.");
 				var assets = b.Output.GetIntermediaryAsText (Path.Combine ("..", "project.assets.json"));
 				StringAssert.Contains ("Xamarin.Android.Support.v4", assets,
 					"Nuget Package Xamarin.Android.Support.v4.21.0.3.0 should have been restored.");
 				var src = Path.Combine (Root, b.ProjectDirectory, proj.IntermediateOutputPath, "android", "src");
-				var main_r_java = Path.Combine (src, "unnamedproject", "unnamedproject", "R.java");
+				var main_r_java = Path.Combine (src, proj.PackageNameJavaIntermediatePath, "R.java");
 				FileAssert.Exists (main_r_java);
 				var lib_r_java = Path.Combine (src, "android", "support", "compat", "R.java");
 				FileAssert.Exists (lib_r_java);
@@ -2612,8 +2652,6 @@ AAMMAAABzYW1wbGUvSGVsbG8uY2xhc3NQSwUGAAAAAAMAAwC9AAAA1gEAAAAA") });
 				string build_props = b.Output.GetIntermediaryPath ("build.props");
 				FileAssert.Exists (build_props, "build.props should exist after first build.");
 				proj.PackageReferences.Add (KnownPackages.SupportV7CardView_27_0_2_1);
-				if (Builder.UseDotNet)
-					proj.AddDotNetCompatPackages ();
 
 				Assert.IsTrue (b.Build (proj, doNotCleanupOnUpdate: true), "second build should have succeeded.");
 				FileAssert.Exists (build_props, "build.props should exist after second build.");
@@ -2763,7 +2801,7 @@ AAMMAAABzYW1wbGUvSGVsbG8uY2xhc3NQSwUGAAAAAAMAAwC9AAAA1gEAAAAA") });
 					File.Exists (Path.Combine (Root, b.ProjectDirectory, proj.IntermediateOutputPath, "android", "assets", "NetStandard16.pdb")),
 					"NetStandard16.pdb must be copied to Intermediate directory");
 				var apk = Path.Combine (Root, b.ProjectDirectory,
-					proj.IntermediateOutputPath, "android", "bin", "UnnamedProject.UnnamedProject.apk");
+					proj.IntermediateOutputPath, "android", "bin", $"{proj.PackageName}.apk");
 				using (var zipFile = ZipHelper.OpenZip (apk)) {
 					Assert.IsNotNull (ZipHelper.ReadFileFromZip (zipFile,
 							"assemblies/NetStandard16.pdb"),
@@ -3241,7 +3279,7 @@ public class MyReceiver : BroadcastReceiver
 					rules.Add ("-dontwarn java.lang.invoke.LambdaMetafactory");
 				}
 				//FIXME: We aren't de-BOM'ing proguard files?
-				var bytes = MonoAndroidHelper.UTF8withoutBOM.GetBytes (string.Join (Environment.NewLine, rules));
+				var bytes = Files.UTF8withoutBOM.GetBytes (string.Join (Environment.NewLine, rules));
 				proj.OtherBuildItems.Add (new BuildItem ("ProguardConfiguration", "okhttp3.pro") {
 					BinaryContent = () => bytes,
 				});
@@ -3316,6 +3354,7 @@ AAAAAAAAAAAAPQAAAE1FVEEtSU5GL01BTklGRVNULk1GUEsBAhQAFAAICAgAJZFnS7uHtAn+AQAA
 
 		//See: https://developer.android.com/about/versions/marshmallow/android-6.0-changes#behavior-apache-http-client
 		[Test]
+		[Retry (5)]
 		public void MissingOrgApacheHttpClient ([Values ("dx", "d8")] string dexTool)
 		{
 			AssertDexToolSupported (dexTool);
@@ -3325,8 +3364,12 @@ AAAAAAAAAAAAPQAAAE1FVEEtSU5GL01BTklGRVNULk1GUEsBAhQAFAAICAgAJZFnS7uHtAn+AQAA
 			proj.AndroidManifest = proj.AndroidManifest.Replace ("</application>",
 				"<uses-library android:name=\"org.apache.http.legacy\" android:required=\"false\" /></application>");
 			proj.SetProperty ("AndroidEnableMultiDex", "True");
+
 			proj.PackageReferences.Add (KnownPackages.Xamarin_GooglePlayServices_Maps);
 			using (var b = CreateApkBuilder (Path.Combine ("temp", TestName))) {
+				string downloaddir = Path.Combine (Root, b.ProjectDirectory, "Downloads");
+				Directory.CreateDirectory (downloaddir);
+				proj.SetProperty ("XamarinBuildDownloadDir", downloaddir);
 				Assert.IsTrue (b.Build (proj), "Build should have succeeded");
 			}
 		}
@@ -3601,22 +3644,15 @@ AAAAAAAAAAAAPQAAAE1FVEEtSU5GL01BTklGRVNULk1GUEsBAhQAFAAICAgAJZFnS7uHtAn+AQAA
 				};
 				var intermediate = Path.Combine (Root, b.ProjectDirectory, proj.IntermediateOutputPath);
 				var oldMonoPackageManager = Path.Combine (intermediate, "android", "src", "mono", "MonoPackageManager.java");
-				var seppuku = Path.Combine (intermediate, "android", "src", "mono", "android", "Seppuku.java");
 				var notifyTimeZoneChanges = Path.Combine (intermediate, "android", "src", "mono", "android", "app", "NotifyTimeZoneChanges.java");
-				Directory.CreateDirectory (Path.GetDirectoryName (seppuku));
 				Directory.CreateDirectory (Path.GetDirectoryName (notifyTimeZoneChanges));
 				File.WriteAllText (oldMonoPackageManager, @"package mono;
 public class MonoPackageManager { }
 class MonoPackageManager_Resources { }");
-				File.WriteAllText (seppuku, @"package mono.android;
-public class Seppuku { }");
 				File.WriteAllText (notifyTimeZoneChanges, @"package mono.android.app;
 public class ApplicationRegistration { }");
 				var oldMonoPackageManagerClass = Path.Combine (intermediate, "android", "bin", "classes" , "mono", "MonoPackageManager.class");
-				var seppukuClass = Path.Combine (intermediate, "android", "bin", "classes", "mono", "android", "Seppuku.class");
-				Directory.CreateDirectory (Path.GetDirectoryName (seppukuClass));
 				File.WriteAllText (oldMonoPackageManagerClass, "");
-				File.WriteAllText (seppukuClass, "");
 				// Change $(XamarinAndroidVersion) to trigger _CleanIntermediateIfNeeded
 				var property = Builder.UseDotNet ? "AndroidNETSdkVersion" : "XamarinAndroidVersion";
 				Assert.IsTrue (b.Build (proj, parameters: new [] { $"{property}=99.99" }, doNotCleanupOnUpdate: true), "Build should have succeeded.");
@@ -3626,8 +3662,6 @@ public class ApplicationRegistration { }");
 				// Old files that should *not* exist
 				FileAssert.DoesNotExist (oldMonoPackageManager);
 				FileAssert.DoesNotExist (oldMonoPackageManagerClass);
-				FileAssert.DoesNotExist (seppuku);
-				FileAssert.DoesNotExist (seppukuClass);
 				FileAssert.DoesNotExist (notifyTimeZoneChanges);
 				// New files that should exist
 				var monoPackageManager_Resources = Path.Combine (intermediate, "android", "src", "mono", "MonoPackageManager_Resources.java");
@@ -3919,7 +3953,7 @@ namespace UnnamedProject
 			using (var b = CreateApkBuilder ()) {
 				Assert.IsTrue (b.Build (proj), "build should have succeeded.");
 				var archive = Path.Combine (Root, b.ProjectDirectory,
-					proj.IntermediateOutputPath, "android", "bin", $"UnnamedProject.UnnamedProject.{packageFormat}");
+					proj.IntermediateOutputPath, "android", "bin", $"{proj.PackageName}.{packageFormat}");
 				var prefix = packageFormat == "apk" ? "" : "base/root/";
 				var expectedFiles = new [] {
 					prefix + "META-INF/maven/com.google.code.gson/gson/pom.xml",

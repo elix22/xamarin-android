@@ -7,6 +7,7 @@ using NUnit.Framework;
 using Xamarin.Android.Tasks;
 using Xamarin.ProjectTools;
 using Xamarin.Tools.Zip;
+using Microsoft.Android.Build.Tasks;
 
 namespace Xamarin.Android.Build.Tests
 {
@@ -52,7 +53,10 @@ namespace Xamarin.Android.Build.Tests
 				Sources = {
 					new BuildItem.Source ("Bar.cs") {
 						TextContent = () => "public class Bar { }",
-					}
+					},
+					new AndroidItem.AndroidResource (() => "Resources\\drawable\\IMALLCAPS.png") {
+						BinaryContent = () => XamarinAndroidApplicationProject.icon_binary_mdpi,
+					},
 				}
 			};
 			libC.OtherBuildItems.Add (new AndroidItem.AndroidAsset ("Assets\\bar\\bar.txt") {
@@ -69,7 +73,19 @@ namespace Xamarin.Android.Build.Tests
 				IsRelease = isRelease,
 				Sources = {
 					new BuildItem.Source ("Foo.cs") {
-						TextContent = () => "public class Foo : Bar { }",
+						TextContent = () =>
+@"public class Foo : Bar
+{
+	public Foo ()
+	{
+		int x = LibraryB.Resource.Drawable.IMALLCAPS;
+	}
+}",
+					},
+					new AndroidItem.AndroidResource ("Resources\\layout\\test.axml") {
+						TextContent = () => {
+							return "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<ImageView xmlns:android=\"http://schemas.android.com/apk/res/android\" android:src=\"@drawable/IMALLCAPS\" />";
+						}
 					}
 				}
 			};
@@ -89,7 +105,7 @@ namespace Xamarin.Android.Build.Tests
 				TextContent = () => $"{env_var}={env_val}",
 			});
 			libB.OtherBuildItems.Add (new AndroidItem.AndroidLibrary ("sub\\directory\\foo.jar") {
-				BinaryContent = () => Convert.FromBase64String (InlineData.JavaClassesJarBase64),
+				BinaryContent = () => ResourceData.JavaSourceJarTestJar,
 			});
 			libB.OtherBuildItems.Add (new AndroidItem.AndroidLibrary ("sub\\directory\\arm64-v8a\\libfoo.so") {
 				BinaryContent = () => Array.Empty<byte> (),
@@ -183,7 +199,7 @@ namespace Xamarin.Android.Build.Tests
 		{
 			var dotnet = CreateDotNetBuilder ();
 			Assert.IsTrue (dotnet.New (template), $"`dotnet new {template}` should succeed");
-			File.WriteAllBytes (Path.Combine (dotnet.ProjectDirectory, "foo.jar"), Convert.FromBase64String (InlineData.JavaClassesJarBase64));
+			File.WriteAllBytes (Path.Combine (dotnet.ProjectDirectory, "foo.jar"), ResourceData.JavaSourceJarTestJar);
 			Assert.IsTrue (dotnet.New ("android-activity"), "`dotnet new android-activity` should succeed");
 			Assert.IsTrue (dotnet.New ("android-layout", Path.Combine (dotnet.ProjectDirectory, "Resources", "layout")), "`dotnet new android-layout` should succeed");
 			Assert.IsTrue (dotnet.Build (), "`dotnet build` should succeed");
@@ -205,7 +221,7 @@ namespace Xamarin.Android.Build.Tests
 				BinaryContent = () => Array.Empty<byte> (),
 			});
 			proj.OtherBuildItems.Add (new AndroidItem.AndroidLibrary ("sub\\directory\\foo.jar") {
-				BinaryContent = () => Convert.FromBase64String (InlineData.JavaClassesJarBase64),
+				BinaryContent = () => ResourceData.JavaSourceJarTestJar,
 			});
 			proj.OtherBuildItems.Add (new AndroidItem.AndroidLibrary ("sub\\directory\\arm64-v8a\\libfoo.so") {
 				BinaryContent = () => Array.Empty<byte> (),
@@ -273,19 +289,25 @@ namespace Xamarin.Android.Build.Tests
 		public void DotNetBuildBinding ()
 		{
 			var proj = new XASdkProject (outputType: "Library");
+			// Both transform files should be applied
+			proj.Sources.Add (new AndroidItem.TransformFile ("Transforms.xml") {
+				TextContent = () =>
+@"<metadata>
+  <attr path=""/api/package[@name='com.xamarin.android.test.msbuildtest']"" name=""managedName"">FooBar</attr>
+</metadata>",
+			});
 			proj.Sources.Add (new AndroidItem.TransformFile ("Transforms\\Metadata.xml") {
 				TextContent = () =>
 @"<metadata>
-  <attr path=""/api/package[@name='com.xamarin.android.test.msbuildtest']"" name=""managedName"">MSBuildTest</attr>
+  <attr path=""/api/package[@managedName='FooBar']"" name=""managedName"">MSBuildTest</attr>
 </metadata>",
 			});
 			proj.Sources.Add (new AndroidItem.AndroidLibrary ("javaclasses.jar") {
-				BinaryContent = () => Convert.FromBase64String (InlineData.JavaClassesJarBase64)
+				BinaryContent = () => ResourceData.JavaSourceJarTestJar,
 			});
-			// TODO: bring back when Xamarin.Android.Bindings.Documentation.targets is working
-			//proj.OtherBuildItems.Add (new BuildItem ("JavaSourceJar", "javasources.jar") {
-			//	BinaryContent = () => Convert.FromBase64String (InlineData.JavaSourcesJarBase64)
-			//});
+			proj.OtherBuildItems.Add (new BuildItem ("JavaSourceJar", "javaclasses-sources.jar") {
+				BinaryContent = () => ResourceData.JavaSourceJarTestSourcesJar,
+			});
 			var dotnet = CreateDotNetBuilder (proj);
 			Assert.IsTrue (dotnet.Build (), "`dotnet build` should succeed");
 
@@ -300,35 +322,35 @@ namespace Xamarin.Android.Build.Tests
 
 		static readonly object [] DotNetBuildSource = new object [] {
 			new object [] {
-				/* runtimeIdentifiers */ "android.21-arm",
+				/* runtimeIdentifiers */ "android-arm",
 				/* isRelease */          false,
 			},
 			new object [] {
-				/* runtimeIdentifiers */ "android.21-arm64",
+				/* runtimeIdentifiers */ "android-arm64",
 				/* isRelease */          false,
 			},
 			new object [] {
-				/* runtimeIdentifiers */ "android.21-x86",
+				/* runtimeIdentifiers */ "android-x86",
 				/* isRelease */          false,
 			},
 			new object [] {
-				/* runtimeIdentifiers */ "android.21-x64",
+				/* runtimeIdentifiers */ "android-x64",
 				/* isRelease */          false,
 			},
 			new object [] {
-				/* runtimeIdentifiers */ "android.21-arm",
+				/* runtimeIdentifiers */ "android-arm",
 				/* isRelease */          true,
 			},
 			new object [] {
-				/* runtimeIdentifiers */ "android.21-arm;android.21-arm64;android.21-x86;android.21-x64",
+				/* runtimeIdentifiers */ "android-arm;android-arm64;android-x86;android-x64",
 				/* isRelease */          false,
 			},
 			new object [] {
-				/* runtimeIdentifiers */ "android.21-arm;android.21-arm64;android.21-x86",
+				/* runtimeIdentifiers */ "android-arm;android-arm64;android-x86",
 				/* isRelease */          true,
 			},
 			new object [] {
-				/* runtimeIdentifiers */ "android.21-arm;android.21-arm64;android.21-x86;android.21-x64",
+				/* runtimeIdentifiers */ "android-arm;android-arm64;android-x86;android-x64",
 				/* isRelease */          true,
 			},
 		};
@@ -339,15 +361,29 @@ namespace Xamarin.Android.Build.Tests
 		public void DotNetBuild (string runtimeIdentifiers, bool isRelease)
 		{
 			var proj = new XASdkProject {
-				IsRelease = isRelease
+				IsRelease = isRelease,
+				ExtraNuGetConfigSources = {
+					"https://pkgs.dev.azure.com/azure-public/vside/_packaging/xamarin-impl/nuget/v3/index.json"
+				},
+				PackageReferences = {
+					new Package { Id = "Xamarin.AndroidX.AppCompat", Version = "1.2.0.7-net6preview01" }
+				},
+				Sources = {
+					new BuildItem ("EmbeddedResource", "Foo.resx") {
+						TextContent = () => InlineData.ResxWithContents ("<data name=\"CancelButton\"><value>Cancel</value></data>")
+					},
+					new BuildItem ("EmbeddedResource", "Foo.es.resx") {
+						TextContent = () => InlineData.ResxWithContents ("<data name=\"CancelButton\"><value>Cancelar</value></data>")
+					},
+				}
 			};
+			proj.MainActivity = proj.DefaultMainActivity.Replace (": Activity", ": AndroidX.AppCompat.App.AppCompatActivity");
 			proj.OtherBuildItems.Add (new AndroidItem.InputJar ("javaclasses.jar") {
-				BinaryContent = () => Convert.FromBase64String (InlineData.JavaClassesJarBase64)
+				BinaryContent = () => ResourceData.JavaSourceJarTestJar,
 			});
-			// TODO: bring back when Xamarin.Android.Bindings.Documentation.targets is working
-			//proj.OtherBuildItems.Add (new BuildItem ("JavaSourceJar", "javasources.jar") {
-			//	BinaryContent = () => Convert.FromBase64String (InlineData.JavaSourcesJarBase64)
-			//});
+			proj.OtherBuildItems.Add (new BuildItem ("JavaSourceJar", "javaclasses-sources.jar") {
+				BinaryContent = () => ResourceData.JavaSourceJarTestSourcesJar,
+			});
 			if (!runtimeIdentifiers.Contains (";")) {
 				proj.SetProperty (KnownProperties.RuntimeIdentifier, runtimeIdentifiers);
 			} else {
@@ -357,26 +393,28 @@ namespace Xamarin.Android.Build.Tests
 			var dotnet = CreateDotNetBuilder (proj);
 			Assert.IsTrue (dotnet.Build (), "`dotnet build` should succeed");
 
-			// TODO: run for release once illink warnings are gone
-			// context: https://github.com/xamarin/xamarin-android/issues/4708
-			if (!isRelease)
-				Assert.IsTrue (StringAssertEx.ContainsText (dotnet.LastBuildOutput, " 0 Warning(s)"), "Should have no MSBuild warnings.");
+			Assert.IsTrue (StringAssertEx.ContainsText (dotnet.LastBuildOutput, " 0 Warning(s)"), "Should have no MSBuild warnings.");
 
 			var outputPath = Path.Combine (FullProjectDirectory, proj.OutputPath);
+			var intermediateOutputPath = Path.Combine (FullProjectDirectory, proj.IntermediateOutputPath);
 			if (!runtimeIdentifiers.Contains (";")) {
 				outputPath = Path.Combine (outputPath, runtimeIdentifiers);
+				intermediateOutputPath = Path.Combine (intermediateOutputPath, runtimeIdentifiers);
 			}
 
 			var files = Directory.EnumerateFileSystemEntries (outputPath)
 				.Select (Path.GetFileName)
 				.OrderBy (f => f)
 				.ToArray ();
-			CollectionAssert.AreEqual (new [] {
-				$"{proj.ProjectName}.dll",
-				$"{proj.ProjectName}.pdb",
+			var expectedFiles = new[]{
 				$"{proj.PackageName}.apk",
 				$"{proj.PackageName}-Signed.apk",
-			}, files);
+				"es",
+				$"{proj.ProjectName}.dll",
+				$"{proj.ProjectName}.pdb",
+				$"{proj.ProjectName}.xml",
+			};
+			CollectionAssert.AreEqual (expectedFiles, files, $"Expected: {string.Join (";", expectedFiles)}\n   Found: {string.Join (";", files)}");
 
 			var assemblyPath = Path.Combine (outputPath, $"{proj.ProjectName}.dll");
 			FileAssert.Exists (assemblyPath);
@@ -386,23 +424,30 @@ namespace Xamarin.Android.Build.Tests
 				Assert.IsNotNull (type, $"{assemblyPath} should contain {typeName}");
 			}
 
+			var rids = runtimeIdentifiers.Split (';');
+			if (isRelease) {
+				// Check for stripped native libraries
+				foreach (var rid in rids) {
+					FileAssert.Exists (Path.Combine (intermediateOutputPath, "native", rid, "libmono-android.release.so"));
+					FileAssert.Exists (Path.Combine (intermediateOutputPath, "native", rid, "libmonosgen-2.0.so"));
+				}
+			}
+
 			bool expectEmbeddedAssembies = !(CommercialBuildAvailable && !isRelease);
-			var apkPath = Path.Combine (outputPath, "UnnamedProject.UnnamedProject.apk");
+			var apkPath = Path.Combine (outputPath, $"{proj.PackageName}.apk");
 			FileAssert.Exists (apkPath);
 			using (var apk = ZipHelper.OpenZip (apkPath)) {
 				apk.AssertContainsEntry (apkPath, $"assemblies/{proj.ProjectName}.dll", shouldContainEntry: expectEmbeddedAssembies);
 				apk.AssertContainsEntry (apkPath, $"assemblies/{proj.ProjectName}.pdb", shouldContainEntry: !CommercialBuildAvailable && !isRelease);
 				apk.AssertContainsEntry (apkPath, $"assemblies/System.Linq.dll",        shouldContainEntry: expectEmbeddedAssembies);
-				var rids = runtimeIdentifiers.Split (';');
-				foreach (var abi in rids.Select (MonoAndroidHelper.RuntimeIdentifierToAbi)) {
+				apk.AssertContainsEntry (apkPath, $"assemblies/es/{proj.ProjectName}.resources.dll", shouldContainEntry: expectEmbeddedAssembies);
+				foreach (var abi in rids.Select (AndroidRidAbiHelper.RuntimeIdentifierToAbi)) {
 					apk.AssertContainsEntry (apkPath, $"lib/{abi}/libmonodroid.so");
 					apk.AssertContainsEntry (apkPath, $"lib/{abi}/libmonosgen-2.0.so");
 					if (rids.Length > 1) {
 						apk.AssertContainsEntry (apkPath, $"assemblies/{abi}/System.Private.CoreLib.dll",        shouldContainEntry: expectEmbeddedAssembies);
-						apk.AssertContainsEntry (apkPath, $"assemblies/{abi}/System.Collections.Concurrent.dll", shouldContainEntry: expectEmbeddedAssembies);
 					} else {
 						apk.AssertContainsEntry (apkPath, "assemblies/System.Private.CoreLib.dll",        shouldContainEntry: expectEmbeddedAssembies);
-						apk.AssertContainsEntry (apkPath, "assemblies/System.Collections.Concurrent.dll", shouldContainEntry: expectEmbeddedAssembies);
 					}
 				}
 			}
@@ -421,7 +466,7 @@ namespace Xamarin.Android.Build.Tests
 		[Test]
 		public void DotNetPublish ([Values (false, true)] bool isRelease)
 		{
-			const string runtimeIdentifier = "android.21-arm";
+			const string runtimeIdentifier = "android-arm";
 			var proj = new XASdkProject {
 				IsRelease = isRelease
 			};
@@ -478,6 +523,70 @@ namespace Xamarin.Android.Build.Tests
 				apk.AssertContainsEntry (apkPath, "res/raw/foo.txt");
 				apk.AssertContainsEntry (apkPath, "assets/foo/bar.txt");
 			}
+		}
+
+		[Test]
+		public void XamarinLegacySdk ()
+		{
+			var proj = new XASdkProject (outputType: "Library") {
+				Sdk = "Xamarin.Legacy.Sdk/0.1.0-alpha2",
+				Sources = {
+					new AndroidItem.AndroidLibrary ("javaclasses.jar") {
+						BinaryContent = () => ResourceData.JavaSourceJarTestJar,
+					}
+				}
+			};
+
+			using var b = new Builder ();
+			var dotnetTargetFramework = "net6.0-android30.0";
+			var legacyTargetFrameworkVersion = b.LatestTargetFrameworkVersion ().TrimStart ('v');
+			var legacyTargetFramework = $"monoandroid{legacyTargetFrameworkVersion}";
+			proj.SetProperty ("TargetFramework",  value: "");
+			proj.SetProperty ("TargetFrameworks", value: $"{dotnetTargetFramework};{legacyTargetFramework}");
+
+			var dotnet = CreateDotNetBuilder (proj);
+			Assert.IsTrue (dotnet.Pack (), "`dotnet pack` should succeed");
+
+			var nupkgPath = Path.Combine (FullProjectDirectory, proj.OutputPath, $"{proj.ProjectName}.1.0.0.nupkg");
+			FileAssert.Exists (nupkgPath);
+			using var nupkg = ZipHelper.OpenZip (nupkgPath);
+			nupkg.AssertContainsEntry (nupkgPath, $"lib/{dotnetTargetFramework}/{proj.ProjectName}.dll");
+			nupkg.AssertContainsEntry (nupkgPath, $"lib/{legacyTargetFramework}/{proj.ProjectName}.dll");
+		}
+
+		[Test]
+		public void DotNetIncremental ()
+		{
+			// Setup dependencies App A -> Lib B
+			var path = Path.Combine ("temp", TestName);
+
+			var libB = new XASdkProject (outputType: "Library") {
+				ProjectName = "LibraryB"
+			};
+			libB.Sources.Clear ();
+			libB.Sources.Add (new BuildItem.Source ("Foo.cs") {
+				TextContent = () => "public class Foo { }",
+			});
+
+			// Will save the project, does not need to build it
+			CreateDotNetBuilder (libB, Path.Combine (path, libB.ProjectName));
+
+			var appA = new XASdkProject {
+				ProjectName = "AppA",
+				Sources = {
+					new BuildItem.Source ("Bar.cs") {
+						TextContent = () => "public class Bar : Foo { }",
+					}
+				}
+			};
+			appA.AddReference (libB);
+			var appBuilder = CreateDotNetBuilder (appA, Path.Combine (path, appA.ProjectName));
+			Assert.IsTrue (appBuilder.Build (), $"{appA.ProjectName} should succeed");
+			appBuilder.AssertTargetIsNotSkipped ("CoreCompile");
+
+			// Build again, no changes
+			Assert.IsTrue (appBuilder.Build (), $"{appA.ProjectName} should succeed");
+			appBuilder.AssertTargetIsSkipped ("CoreCompile");
 		}
 
 		DotNetCLI CreateDotNetBuilder (string relativeProjectDir = null)

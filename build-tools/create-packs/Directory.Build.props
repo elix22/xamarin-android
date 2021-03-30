@@ -1,0 +1,13 @@
+<Project> 
+  <Import Project="..\..\Directory.Build.props" />
+
+  <PropertyGroup>
+    <TargetFramework>net6.0</TargetFramework>
+    <PackageType>DotnetPlatform</PackageType>
+    <Authors>Microsoft</Authors>
+    <OutputPath>..\..\bin\Build$(Configuration)\nuget-unsigned\</OutputPath>
+    <GenerateDependencyFile>false</GenerateDependencyFile>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+  </PropertyGroup>
+
+</Project>

@@ -18,15 +18,17 @@ ifeq ($(PREPARE_CI_PR)$(PREPARE_CI),00)
 else
 	$(MAKE) prepare
 endif
-	$(MAKE) leeroy $(ZIP_OUTPUT)
-ifeq ($(XA_INVERTED_COMMERCIAL_BUILD),true)
-	$(MAKE) commercial
+ifneq ("$(wildcard $(topdir)/external/monodroid/Makefile)","")
+	cd $(topdir)/external/monodroid && ./configure --with-xamarin-android='$(topdir)'
+	cd $(topdir)/external/monodroid && $(MAKE) build-monodroid CONFIGURATION=$(CONFIGURATION) XAMARIN_ANDROID_PATH=$(topdir)
 endif
+	$(MAKE) leeroy $(ZIP_OUTPUT)
 
 leeroy: leeroy-all framework-assemblies opentk-jcw
 
 leeroy-all:
 	$(call MSBUILD_BINLOG,leeroy-all,$(_SLN_BUILD)) /restore $(SOLUTION) /p:Configuration=$(CONFIGURATION) $(_MSBUILD_ARGS)
+	$(call MSBUILD_BINLOG,leeroy-all,$(_SLN_BUILD)) /restore tools/xabuild/xabuild.csproj /p:Configuration=$(CONFIGURATION) $(_MSBUILD_ARGS)
 
 opentk-jcw:
 	$(foreach api_level, $(API_LEVELS), \

@@ -6,6 +6,7 @@ using System.IO;
 using System.Linq;
 using System.Xml.Linq;
 using Microsoft.Build.Framework;
+using Microsoft.Android.Build.Tasks;
 
 namespace Xamarin.Android.Tasks
 {
@@ -52,6 +53,9 @@ namespace Xamarin.Android.Tasks
 		public ITaskItem[] TransformFiles { get; set; }
 		public ITaskItem[] ReferencedManagedLibraries { get; set; }
 		public ITaskItem[] AnnotationsZipFiles { get; set; }
+
+		public ITaskItem[] JavadocXml { get; set; }
+		public string JavadocVerbosity { get; set; }
 
 		private List<Tuple<string, string>> transform_files = new List<Tuple<string,string>> ();
 
@@ -120,7 +124,7 @@ namespace Xamarin.Android.Tasks
 
 			string responseFile = Path.Combine (OutputDirectory, "generator.rsp");
 			Log.LogDebugMessage ("[Generator] response file: {0}", responseFile);
-			using (var sw = new StreamWriter (responseFile, append: false, encoding: MonoAndroidHelper.UTF8withoutBOM)) {
+			using (var sw = new StreamWriter (responseFile, append: false, encoding: Files.UTF8withoutBOM)) {
 
 				if (OnlyRunXmlAdjuster)
 					WriteLine (sw, "--only-xml-adjuster");
@@ -178,6 +182,15 @@ namespace Xamarin.Android.Tasks
 
 					if (features.Any ())
 						WriteLine (sw, $"--lang-features={string.Join (",", features)}");
+				}
+
+				if (!string.IsNullOrEmpty (JavadocVerbosity))
+					WriteLine (sw, $"\"--doc-comment-verbosity={JavadocVerbosity}\"");
+
+				if (JavadocXml != null) {
+					foreach (var xml in JavadocXml) {
+						WriteLine (sw, $"\"--with-javadoc-xml={Path.GetFullPath (xml.ItemSpec)}\"");
+					}
 				}
 			}
 

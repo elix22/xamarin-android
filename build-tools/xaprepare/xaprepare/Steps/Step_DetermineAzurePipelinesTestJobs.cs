@@ -46,19 +46,13 @@ namespace Xamarin.Android.Prepare
 				// MSBuild: Runs all legacy and One .NET Xamarin.Android.Build.Task tests
 				// MSBuildDevice: Runs all MSBuildDeviceIntegration tests
 				// BCL: Runs BCL tests on emulator
-				// TimeZone: Runs timezone unit tests on emulator
 				// Designer: Runs designer integration tests
-				if (file == ".external" || file == "Configuration.props") {
+				if (file == ".external" || file == "Configuration.props" ||
+						file.Contains ("eng/Version") ||
+						IsRelevantBuildToolsFile (file)) {
 					testAreas.Add ("MSBuild");
 					testAreas.Add ("MSBuildDevice");
 					testAreas.Add ("BCL");
-					testAreas.Add ("TimeZone");
-					testAreas.Add ("Designer");
-				}
-
-				if (file.Contains ("build-tools/installers")) {
-					testAreas.Add ("MSBuild");
-					testAreas.Add ("MSBuildDevice");
 					testAreas.Add ("Designer");
 				}
 
@@ -152,7 +146,6 @@ namespace Xamarin.Android.Prepare
 
 				if (file.Contains ("tests/MSBuildDeviceIntegration")) {
 					testAreas.Add ("MSBuildDevice");
-					testAreas.Add ("TimeZone");
 				}
 
 				if (file.Contains ("tests/msbuild-times-reference")) {
@@ -162,6 +155,17 @@ namespace Xamarin.Android.Prepare
 			}
 
 			Log.MessageLine ($"##vso[task.setvariable variable=TestAreas;isOutput=true]{string.Join (",", testAreas)}");
+			return true;
+		}
+
+		bool IsRelevantBuildToolsFile (string fileName)
+		{
+			if (!fileName.Contains ("build-tools/"))
+				return false;
+
+			if (fileName.Contains ("-nightly") || fileName.Contains ("-oss"))
+				return false;
+
 			return true;
 		}
 

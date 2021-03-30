@@ -1,0 +1,81 @@
+{
+  "Comment": null,
+  "Entries": {
+    "AndroidManifest.xml": {
+      "Size": 2584
+    },
+    "res/drawable-mdpi-v4/icon.png": {
+      "Size": 2200
+    },
+    "res/drawable-hdpi-v4/icon.png": {
+      "Size": 4762
+    },
+    "res/drawable-xhdpi-v4/icon.png": {
+      "Size": 7462
+    },
+    "res/drawable-xxhdpi-v4/icon.png": {
+      "Size": 13092
+    },
+    "res/drawable-xxxhdpi-v4/icon.png": {
+      "Size": 20118
+    },
+    "res/layout/main.xml": {
+      "Size": 544
+    },
+    "resources.arsc": {
+      "Size": 1724
+    },
+    "classes.dex": {
+      "Size": 316728
+    },
+    "assemblies/UnnamedProject.dll": {
+      "Size": 3091
+    },
+    "assemblies/System.Linq.dll": {
+      "Size": 10651
+    },
+    "assemblies/System.Runtime.CompilerServices.Unsafe.dll": {
+      "Size": 3382
+    },
+    "assemblies/System.Private.CoreLib.dll": {
+      "Size": 519045
+    },
+    "assemblies/Java.Interop.dll": {
+      "Size": 57089
+    },
+    "assemblies/Mono.Android.dll": {
+      "Size": 82055
+    },
+    "lib/arm64-v8a/libxamarin-app.so": {
+      "Size": 68560
+    },
+    "lib/arm64-v8a/libSystem.IO.Compression.Native.so": {
+      "Size": 776168
+    },
+    "lib/arm64-v8a/libSystem.Native.so": {
+      "Size": 75824
+    },
+    "lib/arm64-v8a/libSystem.Security.Cryptography.Native.OpenSsl.so": {
+      "Size": 137672
+    },
+    "lib/arm64-v8a/libmonosgen-2.0.so": {
+      "Size": 3708520
+    },
+    "lib/arm64-v8a/libmonodroid.so": {
+      "Size": 346800
+    },
+    "lib/arm64-v8a/libxamarin-debug-app-helper.so": {
+      "Size": 37104
+    },
+    "META-INF/ANDROIDD.SF": {
+      "Size": 2429
+    },
+    "META-INF/ANDROIDD.RSA": {
+      "Size": 1213
+    },
+    "META-INF/MANIFEST.MF": {
+      "Size": 2302
+    }
+  },
+  "PackageSize": 2877318
+}

@@ -17,6 +17,7 @@ using ArchiveFileList = System.Collections.Generic.List<(string filePath, string
 using Mono.Cecil;
 using Xamarin.Android.Tools;
 using Xamarin.Tools.Zip;
+using Microsoft.Android.Build.Tasks;
 
 namespace Xamarin.Android.Tasks
 {
@@ -157,8 +158,10 @@ namespace Xamarin.Android.Tasks
 							}
 							Log.LogDebugMessage ($"Deregistering item {entryName}");
 							existingEntries.Remove (entryName);
-							if (lastWriteInput <= lastWriteOutput)
+							if (lastWriteInput <= lastWriteOutput) {
+								Log.LogDebugMessage ($"Skipping to next item. {lastWriteInput} <= {lastWriteOutput}.");
 								continue;
+							}
 							if (apk.Archive.ContainsEntry (entryName)) {
 								ZipEntry e = apk.Archive.ReadEntry (entryName);
 								// check the CRC values as the ModifiedDate is always 01/01/1980 in the aapt generated file.
@@ -229,7 +232,8 @@ namespace Xamarin.Android.Tasks
 
 				count = 0;
 				foreach (var jarFile in jarFilePaths) {
-					using (var jar = ZipArchive.Open (File.OpenRead (jarFile))) {
+					using (var stream = File.OpenRead (jarFile))
+					using (var jar = ZipArchive.Open (stream)) {
 						foreach (var jarItem in jar) {
 							if (jarItem.IsDirectory)
 								continue;
@@ -264,6 +268,9 @@ namespace Xamarin.Android.Tasks
 				}
 				// Clean up Removed files.
 				foreach (var entry in existingEntries) {
+					// never remove an AndroidManifest. It may be renamed when using aab.
+					if (string.Compare (Path.GetFileName (entry), "AndroidManifest.xml", StringComparison.OrdinalIgnoreCase) == 0)
+						continue;
 					Log.LogDebugMessage ($"Removing {entry} as it is not longer required.");
 					apk.Archive.DeleteEntry (entry);
 				}
@@ -288,7 +295,7 @@ namespace Xamarin.Android.Tasks
 			if (compress) {
 				string key = CompressedAssemblyInfo.GetKey (ProjectFullPath);
 				Log.LogDebugMessage ($"Retrieving assembly compression info with key '{key}'");
-				compressedAssembliesInfo = BuildEngine4.UnregisterTaskObject (key, RegisteredTaskObjectLifetime.Build) as IDictionary<string, CompressedAssemblyInfo>;
+				compressedAssembliesInfo = BuildEngine4.UnregisterTaskObjectAssemblyLocal<IDictionary<string, CompressedAssemblyInfo>> (key, RegisteredTaskObjectLifetime.Build);
 				if (compressedAssembliesInfo == null)
 					throw new InvalidOperationException ($"Assembly compression info not found for key '{key}'. Compression will not be performed.");
 			}
@@ -659,7 +666,7 @@ namespace Xamarin.Android.Tasks
 		string GetNativeLibraryAbi (ITaskItem lib)
 		{
 			// If Abi is explicitly specified, simply return it.
-			var lib_abi = MonoAndroidHelper.GetNativeLibraryAbi (lib);
+			var lib_abi = AndroidRidAbiHelper.GetNativeLibraryAbi (lib);
 
 			if (string.IsNullOrWhiteSpace (lib_abi)) {
 				Log.LogCodedError ("XA4301", lib.ItemSpec, 0, Properties.Resources.XA4301_ABI, lib.ItemSpec);
@@ -688,7 +695,7 @@ namespace Xamarin.Android.Tasks
 				return;
 
 			var libs = AdditionalNativeLibraryReferences
-				.Select (l => new LibInfo { Path = l.ItemSpec, Abi = MonoAndroidHelper.GetNativeLibraryAbi (l) });
+				.Select (l => new LibInfo { Path = l.ItemSpec, Abi = AndroidRidAbiHelper.GetNativeLibraryAbi (l) });
 
 			AddNativeLibraries (files, supportedAbis, libs);
 		}

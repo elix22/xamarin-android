@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
+using System.Xml.Linq;
 
 namespace Xamarin.Android.Prepare
 {
@@ -357,6 +358,32 @@ namespace Xamarin.Android.Prepare
 				return hasHostedAgentName || isHostedServerType;
 			}
 		}
+
+		string _bundledPreviewRuntimePackVersion;
+		public string BundledPreviewRuntimePackVersion {
+			get {
+				if (string.IsNullOrEmpty (_bundledPreviewRuntimePackVersion)) {
+					var dotnetPath = Properties.GetRequiredValue (KnownProperties.DotNetPreviewPath);
+					dotnetPath = dotnetPath.TrimEnd (new char [] { Path.DirectorySeparatorChar });
+					var dotnetPreviewVersion = Properties.GetRequiredValue (KnownProperties.MicrosoftDotnetSdkInternalPackageVersion);
+					var bundledVersionsPath = Path.Combine (dotnetPath, "sdk", dotnetPreviewVersion, "Microsoft.NETCoreSdk.BundledVersions.props");
+					if (!File.Exists (bundledVersionsPath))
+						throw new FileNotFoundException ("Could not find Microsoft.NETCoreSdk.BundledVersions.props.", bundledVersionsPath);
+
+					var version = XDocument.Load (bundledVersionsPath).Descendants ().FirstOrDefault (p => p.Name == "BundledNETCoreAppPackageVersion")?.Value ?? string.Empty;
+					if (string.IsNullOrEmpty (version))
+						throw new InvalidOperationException ($"Unable to locate $(BundledNETCoreAppPackageVersion) in {bundledVersionsPath}.");
+
+					_bundledPreviewRuntimePackVersion = version;
+				}
+				return _bundledPreviewRuntimePackVersion;
+			}
+		}
+
+		/// <summary>
+		///   Do not install mingw-w64 with brew on MacOS, default false
+		/// </summary>
+		public bool NoMingwW64 { get; set; } = false;
 
 		static Context ()
 		{
@@ -749,6 +776,7 @@ namespace Xamarin.Android.Prepare
 
 			Log.StatusLine ();
 			Log.StatusLine ("   OS type: ", OS.Type, tailColor: Log.InfoColor);
+			Log.StatusLine (" OS flavor: ", OS.Flavor, tailColor: Log.InfoColor);
 			Log.StatusLine ("   OS name: ", OS.Name, tailColor: Log.InfoColor);
 			Log.StatusLine ("OS release: ", OS.Release, tailColor: Log.InfoColor);
 			Log.StatusLine ("   OS bits: ", OS.Architecture, tailColor: Log.InfoColor);
